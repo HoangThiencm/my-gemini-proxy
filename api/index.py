@@ -7,15 +7,32 @@ from google.api_core import exceptions as google_exceptions
 
 app = Flask(__name__)
 
+# Đọc biến môi trường cho API keys
 API_KEYS_STRING = os.environ.get('GEMINI_API_KEYS', '')
 API_KEYS = [key.strip() for key in API_KEYS_STRING.split(',') if key.strip()]
+
+# Đọc biến môi trường cho Modules
+# Ví dụ: "Gemini 1.5 Flash,gemini-1.5-flash;Gemini 1.5 Pro,gemini-1.5-pro-latest"
+MODULES_STRING = os.environ.get('GEMINI_MODULES', 'Gemini 1.5 Flash (Mặc định),gemini-1.5-flash')
+AVAILABLE_MODULES = []
+for item in MODULES_STRING.split(';'):
+    parts = item.strip().split(',')
+    if len(parts) == 2:
+        AVAILABLE_MODULES.append({'name': parts[0].strip(), 'id': parts[1].strip()})
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST'])
 def catch_all(path):
     if request.method == 'POST' and path == 'api/generate':
         return handle_generate()
+    # Thêm endpoint mới để lấy danh sách modules
+    if request.method == 'GET' and path == 'api/modules':
+        return handle_get_modules()
     return jsonify({"status": "ok", "message": "Proxy server is running."}), 200
+
+def handle_get_modules():
+    """Trả về danh sách các model có sẵn dưới dạng JSON."""
+    return jsonify(AVAILABLE_MODULES)
 
 def handle_generate():
     if not API_KEYS:
@@ -28,7 +45,7 @@ def handle_generate():
     image_data = base64.b64decode(data['image_b64'])
     prompt = data['prompt']
     model_id = data['model_id']
-
+    
     random.shuffle(API_KEYS)
     last_error = None
 
