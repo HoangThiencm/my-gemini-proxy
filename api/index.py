@@ -32,18 +32,38 @@ def get_available_key():
 def catch_all(path):
     """Bắt tất cả các request và điều hướng đến đúng handler."""
     if request.method == 'POST':
-        # Endpoint mới để phân tích toàn bộ đề thi (nhận PDF)
+        # --- [ĐÁNH DẤU] SỬA LỖI ---
+        # Thêm lại endpoint /api/generate cho ứng dụng cũ (HT_MATH)
+        if path == 'api/generate':
+            return handle_generate_for_old_app()
+        # Endpoint cho ứng dụng mới (Exam Analyzer)
         if path == 'api/locate_questions':
             return handle_task_with_file_upload()
-        # Endpoint mới để phân tích từng câu hỏi (nhận ảnh)
         elif path == 'api/analyze_question':
             return handle_task_with_image_upload()
             
-    # Endpoint để lấy danh sách model
+    # Endpoint để lấy danh sách model (dùng chung cho cả hai)
     elif request.method == 'GET' and path == 'api/modules':
         return jsonify(AVAILABLE_MODULES)
         
-    return jsonify({"status": "ok", "message": "Exam Analyzer Proxy is running."}), 200
+    return jsonify({"status": "ok", "message": "Proxy server is running."}), 200
+
+# --- [ĐÁNH DẤU] SỬA LỖI ---
+# Thêm lại hàm xử lý cho ứng dụng cũ.
+def handle_generate_for_old_app():
+    """Xử lý yêu cầu từ ứng dụng HT_MATH cũ."""
+    data = request.get_json()
+    if not data or 'image_b64' not in data or 'prompt' not in data or 'model_id' not in data:
+        return jsonify({"error": "Yêu cầu thiếu image_b64, prompt, hoặc model_id."}), 400
+
+    image_data = base64.b64decode(data['image_b64'])
+    prompt = data['prompt']
+    model_id = data['model_id']
+    
+    image_part = {"mime_type": "image/png", "data": image_data}
+    
+    # Chạy tác vụ và yêu cầu trả về text
+    return run_generation_with_retry([prompt, image_part], model_id, response_type="text")
 
 def handle_task_with_file_upload():
     """Xử lý các tác vụ yêu cầu gửi cả file (PDF) và prompt."""
@@ -55,10 +75,10 @@ def handle_task_with_file_upload():
     model_id = data['model_id']
     file_data = base64.b64decode(data['file_b64'])
     
-    # Giả định mime_type là application/pdf cho tác vụ này
     file_part = {"mime_type": "application/pdf", "data": file_data}
     
-    return run_generation_with_retry([prompt, file_part], model_id)
+    # Chạy tác vụ và yêu cầu trả về JSON
+    return run_generation_with_retry([prompt, file_part], model_id, response_type="json")
 
 def handle_task_with_image_upload():
     """Xử lý các tác vụ yêu cầu gửi ảnh và prompt."""
@@ -72,9 +92,10 @@ def handle_task_with_image_upload():
     
     image_part = {"mime_type": "image/png", "data": image_data}
     
-    return run_generation_with_retry([prompt, image_part], model_id)
+    # Chạy tác vụ và yêu cầu trả về JSON
+    return run_generation_with_retry([prompt, image_part], model_id, response_type="json")
 
-def run_generation_with_retry(content_parts, model_id):
+def run_generation_with_retry(content_parts, model_id, response_type="text"):
     """
     Hàm chung để chạy generate_content và tự động thử lại với key khác nếu thất bại.
     """
@@ -89,19 +110,21 @@ def run_generation_with_retry(content_parts, model_id):
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(model_id)
             
-            # Yêu cầu trả về JSON
-            generation_config = {"response_mime_type": "application/json"}
+            generation_config = {}
+            if response_type == "json":
+                generation_config = {"response_mime_type": "application/json"}
 
             response = model.generate_content(content_parts, generation_config=generation_config)
             
-            # --- [ĐÁNH DẤU] SỬA LỖI ---
-            # Xử lý trường hợp AI trả về JSON trong một danh sách (list)
-            json_response = response.parts[0].json
-            if isinstance(json_response, list) and len(json_response) > 0:
-                return jsonify(json_response[0])
-            
-            # Trả về kết quả JSON trực tiếp nếu nó là một đối tượng (dict)
-            return jsonify(json_response)
+            # Trả về kết quả dựa trên loại yêu cầu
+            if response_type == "json":
+                json_response = response.parts[0].json
+                if isinstance(json_response, list) and len(json_response) > 0:
+                    return jsonify(json_response[0])
+                return jsonify(json_response)
+            else: # response_type == "text"
+                processed_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
+                return jsonify({"result": processed_text})
 
         except (google_exceptions.PermissionDenied, google_exceptions.ResourceExhausted) as e:
             print(f"Key ...{api_key[-4:]} failed: {e}")
