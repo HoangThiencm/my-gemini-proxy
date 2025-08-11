@@ -94,8 +94,14 @@ def run_generation_with_retry(content_parts, model_id):
 
             response = model.generate_content(content_parts, generation_config=generation_config)
             
-            # Trả về kết quả JSON trực tiếp
-            return jsonify(response.parts[0].json)
+            # --- [ĐÁNH DẤU] SỬA LỖI ---
+            # Xử lý trường hợp AI trả về JSON trong một danh sách (list)
+            json_response = response.parts[0].json
+            if isinstance(json_response, list) and len(json_response) > 0:
+                return jsonify(json_response[0])
+            
+            # Trả về kết quả JSON trực tiếp nếu nó là một đối tượng (dict)
+            return jsonify(json_response)
 
         except (google_exceptions.PermissionDenied, google_exceptions.ResourceExhausted) as e:
             print(f"Key ...{api_key[-4:]} failed: {e}")
